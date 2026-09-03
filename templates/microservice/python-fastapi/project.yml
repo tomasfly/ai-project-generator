@@ -1,0 +1,23 @@
+name: __PROJECT_NAME__
+
+standard:
+  name: ai-engineering-standard
+  version: "__STANDARD_VERSION__"
+
+profile:
+  name: __PROFILE_NAME__
+  version: "__PROFILE_VERSION__"
+
+technology:
+  language: __LANGUAGE__
+  framework: __FRAMEWORK__
+  database: postgresql
+
+capabilities:
+  docker: true
+  docker_compose: true
+  cloud_ready: true
+  tdd: true
+  mermaid: true
+  openapi: true
+  observability: true

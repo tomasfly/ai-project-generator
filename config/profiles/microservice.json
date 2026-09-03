@@ -1,0 +1,12 @@
+{
+  "name": "microservice",
+  "version": "1.0.0",
+  "description": "Independently deployable service with an HTTP API and operational defaults.",
+  "technologies": [
+    {
+      "language": "python",
+      "framework": "fastapi",
+      "template": "microservice/python-fastapi"
+    }
+  ]
+}

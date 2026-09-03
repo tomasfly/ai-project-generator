@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Create a self-contained project from a named profile and template."""
+
+import argparse
+import json
+import re
+import shutil
+import sys
+from pathlib import Path
+from typing import Dict, Iterable
+
+
+ROOT = Path(__file__).resolve().parent.parent
+PROFILE_DIRECTORY = ROOT / "config" / "profiles"
+TEMPLATE_DIRECTORY = ROOT / "templates"
+PROJECT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
+
+
+def parse_arguments(arguments: Iterable[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create a project from an AI Engineering Standard profile."
+    )
+    parser.add_argument("name", help="Project name in lowercase kebab-case.")
+    parser.add_argument("--profile", required=True, help="Project profile name.")
+    parser.add_argument("--language", required=True, help="Implementation language.")
+    parser.add_argument("--framework", required=True, help="Primary framework.")
+    parser.add_argument(
+        "--standard-version",
+        default="1.0.0",
+        help="AI Engineering Standard version to record (default: 1.0.0).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path.cwd(),
+        help="Directory where the project will be created (default: current directory).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the request and display the selected template without writing files.",
+    )
+    return parser.parse_args(arguments)
+
+
+def validate_project_name(name: str) -> None:
+    if not PROJECT_NAME_PATTERN.fullmatch(name):
+        raise ValueError("Project name must use lowercase kebab-case, for example 'orders-service'.")
+
+
+def load_profile(name: str) -> Dict[str, object]:
+    profile_file = PROFILE_DIRECTORY / f"{name}.json"
+    if not profile_file.is_file():
+        raise ValueError(f"Unknown profile '{name}'. Add {profile_file.name} under config/profiles/.")
+
+    try:
+        with profile_file.open(encoding="utf-8") as file_handle:
+            profile = json.load(file_handle)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid profile configuration in {profile_file}: {error.msg}.") from error
+
+    if profile.get("name") != name or not profile.get("version"):
+        raise ValueError(f"Profile '{name}' must define matching 'name' and non-empty 'version' fields.")
+    if not isinstance(profile.get("technologies"), list):
+        raise ValueError(f"Profile '{name}' must define a 'technologies' list.")
+    return profile
+
+
+def select_technology(profile: Dict[str, object], language: str, framework: str) -> Dict[str, str]:
+    for technology in profile["technologies"]:
+        if not isinstance(technology, dict):
+            continue
+        if technology.get("language") == language and technology.get("framework") == framework:
+            template = technology.get("template")
+            if isinstance(template, str) and template:
+                return {"template": template}
+            break
+    raise ValueError(
+        f"Profile '{profile['name']}' does not support language '{language}' with framework '{framework}'."
+    )
+
+
+def replace_tokens(file_path: Path, replacements: Dict[str, str]) -> None:
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return
+    for token, value in replacements.items():
+        content = content.replace(token, value)
+    file_path.write_text(content, encoding="utf-8")
+
+
+def create_project(arguments: argparse.Namespace) -> Path:
+    validate_project_name(arguments.name)
+    profile = load_profile(arguments.profile)
+    technology = select_technology(profile, arguments.language, arguments.framework)
+    template_path = TEMPLATE_DIRECTORY / technology["template"]
+    destination = arguments.output_dir.resolve() / arguments.name
+
+    if destination.exists():
+        raise ValueError(f"Destination already exists: {destination}.")
+    if arguments.dry_run:
+        print(f"Would create {destination} from template {template_path}.")
+        return destination
+    if not template_path.is_dir():
+        raise ValueError(f"Template is not available: {template_path}.")
+
+    shutil.copytree(template_path, destination)
+    replacements = {
+        "__PROJECT_NAME__": arguments.name,
+        "__STANDARD_VERSION__": arguments.standard_version,
+        "__PROFILE_NAME__": str(profile["name"]),
+        "__PROFILE_VERSION__": str(profile["version"]),
+        "__LANGUAGE__": arguments.language,
+        "__FRAMEWORK__": arguments.framework,
+    }
+    for file_path in destination.rglob("*"):
+        if file_path.is_file():
+            replace_tokens(file_path, replacements)
+    return destination
+
+
+def main() -> int:
+    arguments = parse_arguments(sys.argv[1:])
+    try:
+        destination = create_project(arguments)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    if not arguments.dry_run:
+        print(f"Created project at {destination}.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
