@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Project lifecycle commands."""
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+
+ROOT = Path(__file__).resolve().parent.parent
+PROFILE_DIRECTORY = ROOT / "config" / "profiles"
+SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def parse_arguments(arguments: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="ai-project")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    validate_parser = subparsers.add_parser("validate", help="Validate the current project contract.")
+    validate_parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path.cwd(),
+        help="Project directory to validate (default: current directory).",
+    )
+    return parser.parse_args(arguments)
+
+
+def load_yaml(path: Path) -> Tuple[Optional[Dict[str, object]], Optional[str]]:
+    if yaml is None:
+        return None, "PyYAML is required. Install generator dependencies with: pip install -r requirements.txt"
+    if not path.is_file():
+        return None, f"{path.name} missing"
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        return None, f"invalid YAML: {error}"
+    if not isinstance(value, dict):
+        return None, "metadata must be a YAML mapping"
+    return value, None
+
+
+def check_metadata(project: Dict[str, object], project_dir: Path) -> List[str]:
+    failures: List[str] = []
+    for section, fields in {
+        "standard": ["name", "version"],
+        "profile": ["name", "version"],
+        "template": ["name", "version"],
+    }.items():
+        value = project.get(section)
+        if not isinstance(value, dict):
+            failures.append(f"{section} metadata missing")
+            continue
+        for field in fields:
+            field_value = value.get(field)
+            if not isinstance(field_value, str) or not field_value:
+                failures.append(f"{section}.{field} missing")
+            elif field == "version" and not SEMVER_PATTERN.fullmatch(field_value):
+                failures.append(f"{section}.{field} must use MAJOR.MINOR.PATCH")
+    name = project.get("name")
+    if not isinstance(name, str) or not name:
+        failures.append("name missing")
+    return failures
+
+
+def check_profile_requirements(project: Dict[str, object], project_dir: Path) -> List[Tuple[str, bool]]:
+    profile = project.get("profile")
+    technology = project.get("technology")
+    checks: List[Tuple[str, bool]] = []
+    if not isinstance(profile, dict) or not isinstance(technology, dict):
+        return checks
+    profile_file = PROFILE_DIRECTORY / f"{profile.get('name')}.json"
+    if not profile_file.is_file():
+        return [(f"profile {profile.get('name')} missing", False)]
+    try:
+        profile_data = json.loads(profile_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [(f"invalid profile {profile_file.name}", False)]
+    if not isinstance(profile_data, dict):
+        return [(f"invalid profile {profile_file.name}", False)]
+    technologies = profile_data.get("technologies", [])
+    if isinstance(technologies, list) and isinstance(technology, dict):
+        mapping = next(
+            (
+                item
+                for item in technologies
+                if isinstance(item, dict)
+                and item.get("language") == technology.get("language")
+                and item.get("framework") == technology.get("framework")
+            ),
+            None,
+        )
+        template = project.get("template")
+        template_name = template.get("name") if isinstance(template, dict) else None
+        checks.append(("profile/template mapping", isinstance(mapping, dict) and mapping.get("template") == template_name))
+        if template_name:
+            template_directory = ROOT / "templates" / str(profile.get("name")) / template_name
+            metadata, metadata_error = load_yaml(template_directory / "template.yml")
+            if metadata_error:
+                checks.append((f"template metadata: {metadata_error}", False))
+            else:
+                template_metadata = metadata.get("template", {}) if metadata else {}
+                checks.append(("template metadata name", template_metadata.get("name") == template_name))
+                checks.append(("template metadata version", template_metadata.get("version") == template.get("version")))
+    requirements = profile_data.get("requirements")
+    if not isinstance(requirements, dict):
+        return [("profile requirements missing", False)]
+    for relative_path in requirements.get("files", []):
+        checks.append((relative_path, (project_dir / relative_path).is_file()))
+    for relative_path in requirements.get("directories", []):
+        checks.append((relative_path + "/", (project_dir / relative_path).is_dir()))
+    docker_requirements = requirements.get("docker", {})
+    if isinstance(docker_requirements, dict):
+        dockerfile = project_dir / "Dockerfile"
+        content = dockerfile.read_text(encoding="utf-8") if dockerfile.is_file() else ""
+        if docker_requirements.get("non_root_user"):
+            checks.append(("Dockerfile non-root user", "USER " in content))
+        if docker_requirements.get("healthcheck"):
+            checks.append(("Dockerfile healthcheck", "HEALTHCHECK" in content))
+    architecture_document = requirements.get("architecture_document")
+    if isinstance(architecture_document, str):
+        checks.append((architecture_document, (project_dir / architecture_document).is_file()))
+    return checks
+
+
+def validate_project(project_dir: Path) -> int:
+    project, error = load_yaml(project_dir / "project.yml")
+    print("AI Project Validation")
+    print(f"\nProject: {project.get('name', project_dir.name) if project else project_dir.name}")
+    if error:
+        print(f"\n[FAIL] project.yml: {error}\n\nResult:\n  FAIL")
+        return 1
+    assert project is not None
+    failures = check_metadata(project, project_dir)
+    for failure in failures:
+        print(f"\n[FAIL] {failure}")
+    for section in ("standard", "profile", "template"):
+        value = project.get(section)
+        if isinstance(value, dict) and value.get("name") and value.get("version"):
+            print(f"\n{section.title()}:\n  [OK] {value['name']} {value['version']}")
+    checks = check_profile_requirements(project, project_dir)
+    for label, passed in checks:
+        print(f"\n{'[OK]' if passed else '[FAIL]'} {label}")
+        if not passed:
+            failures.append(label)
+    print(f"\nResult:\n  {'FAIL' if failures else 'PASS'}")
+    return 1 if failures else 0
+
+
+def main(arguments: List[str]) -> int:
+    parsed = parse_arguments(arguments)
+    if parsed.command == "validate":
+        return validate_project(parsed.project_dir.resolve())
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

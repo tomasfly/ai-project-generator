@@ -90,11 +90,23 @@ def replace_tokens(file_path: Path, replacements: Dict[str, str]) -> None:
     file_path.write_text(content, encoding="utf-8")
 
 
+def read_template_version(template_path: Path) -> str:
+    metadata_path = template_path / "template.yml"
+    if not metadata_path.is_file():
+        raise ValueError(f"Template metadata is missing: {metadata_path}.")
+    for line in metadata_path.read_text(encoding="utf-8").splitlines():
+        if line.strip().startswith("version:"):
+            version = line.split(":", 1)[1].strip().strip('"')
+            if version:
+                return version
+    raise ValueError(f"Template metadata has no version: {metadata_path}.")
+
+
 def create_project(arguments: argparse.Namespace) -> Path:
     validate_project_name(arguments.name)
     profile = load_profile(arguments.profile)
     technology = select_technology(profile, arguments.language, arguments.framework)
-    template_path = TEMPLATE_DIRECTORY / technology["template"]
+    template_path = TEMPLATE_DIRECTORY / arguments.profile / technology["template"]
     destination = arguments.output_dir.resolve() / arguments.name
 
     if destination.exists():
@@ -111,6 +123,7 @@ def create_project(arguments: argparse.Namespace) -> Path:
         "__STANDARD_VERSION__": arguments.standard_version,
         "__PROFILE_NAME__": str(profile["name"]),
         "__PROFILE_VERSION__": str(profile["version"]),
+        "__TEMPLATE_VERSION__": read_template_version(template_path),
         "__LANGUAGE__": arguments.language,
         "__FRAMEWORK__": arguments.framework,
     }

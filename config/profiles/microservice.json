@@ -6,7 +6,13 @@
     {
       "language": "python",
       "framework": "fastapi",
-      "template": "microservice/python-fastapi"
+      "template": "python-fastapi"
     }
-  ]
+  ],
+  "requirements": {
+    "files": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", "README.md", "project.yml", "Dockerfile", "docker-compose.yml", "pyproject.toml"],
+    "directories": [".github", "tests", "tests/unit", "tests/integration", "tests/e2e", "src", "docs", "docs/architecture"],
+    "docker": {"non_root_user": true, "healthcheck": true},
+    "architecture_document": "docs/architecture/overview.md"
+  }
 }

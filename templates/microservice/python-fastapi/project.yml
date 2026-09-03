@@ -8,6 +8,10 @@ profile:
   name: __PROFILE_NAME__
   version: "__PROFILE_VERSION__"
 
+template:
+  name: python-fastapi
+  version: "__TEMPLATE_VERSION__"
+
 technology:
   language: __LANGUAGE__
   framework: __FRAMEWORK__
