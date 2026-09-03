@@ -69,21 +69,33 @@ def check_metadata(project: Dict[str, object], project_dir: Path) -> List[str]:
     return failures
 
 
-def check_profile_requirements(project: Dict[str, object], project_dir: Path) -> List[Tuple[str, bool]]:
+def check_profile_requirements(
+    project: Dict[str, object], project_dir: Path
+) -> Tuple[List[Tuple[str, bool]], List[str], Dict[str, str]]:
     profile = project.get("profile")
     technology = project.get("technology")
     checks: List[Tuple[str, bool]] = []
+    warnings: List[str] = []
+    available_versions: Dict[str, str] = {}
     if not isinstance(profile, dict) or not isinstance(technology, dict):
-        return checks
+        return checks, warnings, available_versions
     profile_file = PROFILE_DIRECTORY / f"{profile.get('name')}.json"
     if not profile_file.is_file():
-        return [(f"profile {profile.get('name')} missing", False)]
+        return [(f"profile {profile.get('name')} missing", False)], warnings, available_versions
     try:
         profile_data = json.loads(profile_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return [(f"invalid profile {profile_file.name}", False)]
+        return [(f"invalid profile {profile_file.name}", False)], warnings, available_versions
     if not isinstance(profile_data, dict):
-        return [(f"invalid profile {profile_file.name}", False)]
+        return [(f"invalid profile {profile_file.name}", False)], warnings, available_versions
+    available_profile_version = profile_data.get("version")
+    if isinstance(available_profile_version, str):
+        available_versions["profile"] = available_profile_version
+        if profile.get("version") != available_profile_version:
+            warnings.append(
+                f"Exact historical profile metadata unavailable; structural validation uses "
+                f"available {profile.get('name')} {available_profile_version}."
+            )
     technologies = profile_data.get("technologies", [])
     if isinstance(technologies, list) and isinstance(technology, dict):
         mapping = next(
@@ -98,7 +110,8 @@ def check_profile_requirements(project: Dict[str, object], project_dir: Path) ->
         )
         template = project.get("template")
         template_name = template.get("name") if isinstance(template, dict) else None
-        checks.append(("profile/template mapping", isinstance(mapping, dict) and mapping.get("template") == template_name))
+        mapping_matches = isinstance(mapping, dict) and mapping.get("template") == template_name
+        checks.append(("profile/template mapping", mapping_matches))
         if template_name:
             template_directory = ROOT / "templates" / str(profile.get("name")) / template_name
             metadata, metadata_error = load_yaml(template_directory / "template.yml")
@@ -107,10 +120,18 @@ def check_profile_requirements(project: Dict[str, object], project_dir: Path) ->
             else:
                 template_metadata = metadata.get("template", {}) if metadata else {}
                 checks.append(("template metadata name", template_metadata.get("name") == template_name))
-                checks.append(("template metadata version", template_metadata.get("version") == template.get("version")))
+                available_template_version = template_metadata.get("version")
+                if isinstance(available_template_version, str):
+                    available_versions["template"] = available_template_version
+                    if template.get("version") != available_template_version:
+                        warnings.append(
+                            f"Exact historical template metadata unavailable; structural validation uses "
+                            f"available {template_name} {available_template_version}."
+                        )
+                checks.append(("template metadata version", isinstance(available_template_version, str)))
     requirements = profile_data.get("requirements")
     if not isinstance(requirements, dict):
-        return [("profile requirements missing", False)]
+        return [("profile requirements missing", False)], warnings, available_versions
     for relative_path in requirements.get("files", []):
         checks.append((relative_path, (project_dir / relative_path).is_file()))
     for relative_path in requirements.get("directories", []):
@@ -126,7 +147,7 @@ def check_profile_requirements(project: Dict[str, object], project_dir: Path) ->
     architecture_document = requirements.get("architecture_document")
     if isinstance(architecture_document, str):
         checks.append((architecture_document, (project_dir / architecture_document).is_file()))
-    return checks
+    return checks, warnings, available_versions
 
 
 def validate_project(project_dir: Path) -> int:
@@ -143,12 +164,22 @@ def validate_project(project_dir: Path) -> int:
     for section in ("standard", "profile", "template"):
         value = project.get(section)
         if isinstance(value, dict) and value.get("name") and value.get("version"):
-            print(f"\n{section.title()}:\n  [OK] {value['name']} {value['version']}")
-    checks = check_profile_requirements(project, project_dir)
+            print(f"\n{section.title()}:\n  declared: {value['name']} {value['version']}\n  [OK] metadata")
+    checks, warnings, available_versions = check_profile_requirements(project, project_dir)
+    for section in ("profile", "template"):
+        value = project.get(section)
+        if isinstance(value, dict) and section in available_versions:
+            print(f"\n{section.title()} available: {value.get('name')} {available_versions[section]}")
+            if value.get("version") == available_versions[section]:
+                print("  [OK] exact metadata available")
+            else:
+                print("  [WARN] exact historical metadata unavailable")
     for label, passed in checks:
         print(f"\n{'[OK]' if passed else '[FAIL]'} {label}")
         if not passed:
             failures.append(label)
+    for warning in warnings:
+        print(f"\n[WARN] {warning}")
     print(f"\nResult:\n  {'FAIL' if failures else 'PASS'}")
     return 1 if failures else 0
 

@@ -13,6 +13,7 @@ from typing import Dict, Iterable
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE_DIRECTORY = ROOT / "config" / "profiles"
 TEMPLATE_DIRECTORY = ROOT / "templates"
+GENERATOR_CONFIGURATION = ROOT / "config" / "generator.json"
 PROJECT_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 
 
@@ -26,8 +27,7 @@ def parse_arguments(arguments: Iterable[str]) -> argparse.Namespace:
     parser.add_argument("--framework", required=True, help="Primary framework.")
     parser.add_argument(
         "--standard-version",
-        default="1.0.0",
-        help="AI Engineering Standard version to record (default: 1.0.0).",
+        help="Explicit AI Engineering Standard version override.",
     )
     parser.add_argument(
         "--output-dir",
@@ -102,12 +102,33 @@ def read_template_version(template_path: Path) -> str:
     raise ValueError(f"Template metadata has no version: {metadata_path}.")
 
 
+def read_standard_version() -> str:
+    try:
+        configuration = json.loads(GENERATOR_CONFIGURATION.read_text(encoding="utf-8"))
+        configured_path = configuration["standard_version_file"]
+    except (OSError, KeyError, json.JSONDecodeError) as error:
+        raise ValueError(f"Invalid generator configuration: {GENERATOR_CONFIGURATION}.") from error
+    version_path = (ROOT / configured_path).resolve()
+    if not version_path.is_file():
+        raise ValueError(
+            f"Standard version source is unavailable: {version_path}. "
+            "Provide --standard-version explicitly or configure a local VERSION source."
+        )
+    version = version_path.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError(f"Standard version source is not valid SemVer: {version_path}.")
+    return version
+
+
 def create_project(arguments: argparse.Namespace) -> Path:
     validate_project_name(arguments.name)
     profile = load_profile(arguments.profile)
     technology = select_technology(profile, arguments.language, arguments.framework)
     template_path = TEMPLATE_DIRECTORY / arguments.profile / technology["template"]
     destination = arguments.output_dir.resolve() / arguments.name
+    standard_version = arguments.standard_version or read_standard_version()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", standard_version):
+        raise ValueError("Standard version must use MAJOR.MINOR.PATCH.")
 
     if destination.exists():
         raise ValueError(f"Destination already exists: {destination}.")
@@ -120,7 +141,7 @@ def create_project(arguments: argparse.Namespace) -> Path:
     shutil.copytree(template_path, destination)
     replacements = {
         "__PROJECT_NAME__": arguments.name,
-        "__STANDARD_VERSION__": arguments.standard_version,
+        "__STANDARD_VERSION__": standard_version,
         "__PROFILE_NAME__": str(profile["name"]),
         "__PROFILE_VERSION__": str(profile["version"]),
         "__TEMPLATE_VERSION__": read_template_version(template_path),

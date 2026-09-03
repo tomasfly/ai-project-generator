@@ -66,6 +66,46 @@ class CreateProjectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("does not support", result.stderr)
 
+    def test_explicit_standard_version_override_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as output_directory:
+            result = self.run_generator(
+                "orders-service",
+                "--profile",
+                "microservice",
+                "--language",
+                "python",
+                "--framework",
+                "fastapi",
+                "--standard-version",
+                "2.3.4",
+                "--output-dir",
+                output_directory,
+            )
+            project_yml = Path(output_directory) / "orders-service" / "project.yml"
+            project_content = project_yml.read_text(encoding="utf-8")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('version: "2.3.4"', project_content)
+
+    def test_default_version_is_read_from_configured_source(self) -> None:
+        with tempfile.TemporaryDirectory() as output_directory:
+            result = self.run_generator(
+                "orders-service",
+                "--profile",
+                "microservice",
+                "--language",
+                "python",
+                "--framework",
+                "fastapi",
+                "--output-dir",
+                output_directory,
+            )
+            project_yml = Path(output_directory) / "orders-service" / "project.yml"
+            project_content = project_yml.read_text(encoding="utf-8")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('version: "1.0.0"', project_content)
+
 
 if __name__ == "__main__":
     unittest.main()
