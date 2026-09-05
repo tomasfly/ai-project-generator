@@ -22,6 +22,151 @@ The included concrete template generates a Python/FastAPI microservice. The gene
 
 Add `--dry-run` to validate the project name and selected profile without writing files.
 
+## Use Cases
+
+Run commands from the generator repository:
+
+```sh
+cd ai-project-generator
+```
+
+### Inspect Available Commands
+
+```sh
+python3 scripts/create-project --help
+python3 scripts/ai-project --help
+```
+
+### Create a Project
+
+The current supported combination is `microservice` + `python` + `fastapi`:
+
+```sh
+python3 scripts/create-project orders-service \
+  --profile microservice \
+  --language python \
+  --framework fastapi \
+  --output-dir ..
+```
+
+The project is created at `../orders-service`. The `name` argument must be lowercase kebab-case, such as `orders-service`.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `name` | Yes | Project name in lowercase kebab-case. |
+| `--profile` | Yes | Profile name from `config/profiles/`. |
+| `--language` | Yes | Language declared by the selected profile. |
+| `--framework` | Yes | Framework declared by the selected profile. |
+| `--output-dir` | No | Parent directory for the new project; defaults to the current directory. |
+| `--standard-version` | No | Explicit `MAJOR.MINOR.PATCH` Standard version override. |
+| `--dry-run` | No | Validates the request and shows the resolved template without creating files. |
+
+Use a dry run before creating a project:
+
+```sh
+python3 scripts/create-project orders-service \
+  --profile microservice \
+  --language python \
+  --framework fastapi \
+  --dry-run
+```
+
+When the Standard checkout is not at the local path configured in `config/generator.json`, provide its version explicitly:
+
+```sh
+python3 scripts/create-project payments-service \
+  --profile microservice \
+  --language python \
+  --framework fastapi \
+  --standard-version 1.0.0 \
+  --output-dir ..
+```
+
+### Validate a Generated Project
+
+Install the generator dependencies, then validate from the generator repository:
+
+```sh
+python3 -m pip install -r requirements.txt
+python3 scripts/ai-project validate --project-dir ../orders-service
+```
+
+The generated project also includes the validator, so it can be run in place:
+
+```sh
+cd ../orders-service
+./scripts/ai-project validate
+```
+
+### Add a Technology Template
+
+To support a new technology for an existing profile, create a self-contained template and map it in that profile. For example, to add a Node.js/Express microservice:
+
+1. Create `templates/microservice/node-express/` by using `templates/microservice/python-fastapi/` as the structural reference.
+2. Add `templates/microservice/node-express/template.yml`:
+
+   ```yaml
+   template:
+     name: node-express
+     version: "1.0.0"
+   ```
+
+3. Include every file and directory required by `config/profiles/microservice.json`, adapting the implementation to the technology. Keep token placeholders such as `__PROJECT_NAME__`, `__STANDARD_VERSION__`, `__PROFILE_NAME__`, `__PROFILE_VERSION__`, `__TEMPLATE_VERSION__`, `__LANGUAGE__`, and `__FRAMEWORK__` where generated metadata or documentation needs them.
+4. Add the mapping to the `technologies` array in `config/profiles/microservice.json`:
+
+   ```json
+   {
+     "language": "node",
+     "framework": "express",
+     "template": "node-express"
+   }
+   ```
+
+5. Check template resolution before creating a project:
+
+   ```sh
+   python3 scripts/create-project catalog-service \
+     --profile microservice \
+     --language node \
+     --framework express \
+     --dry-run
+   ```
+
+### Add a Profile
+
+Create a profile when its required project contract differs from an existing profile, such as a frontend application. Add `config/profiles/frontend.json` with the supported technology mappings and the files/directories that validation must require:
+
+```json
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "Web application.",
+  "technologies": [
+    {
+      "language": "typescript",
+      "framework": "react-vite",
+      "template": "typescript-react-vite"
+    }
+  ],
+  "requirements": {
+    "files": ["AGENTS.md", "CLAUDE.md", ".github/copilot-instructions.md", "README.md", "project.yml", "package.json"],
+    "directories": [".github", "src", "tests", "docs", "docs/architecture"],
+    "docker": {},
+    "architecture_document": "docs/architecture/overview.md"
+  }
+}
+```
+
+Create the matching self-contained template at `templates/frontend/typescript-react-vite/`, including `template.yml` and all required files. Then verify the new mapping:
+
+```sh
+python3 scripts/create-project customer-portal \
+  --profile frontend \
+  --language typescript \
+  --framework react-vite \
+  --dry-run
+```
+
 Profile files are JSON to keep the generator core simple and dependency-light. Each one has a name, version, technology-to-template mapping, and profile requirements. Add a profile or technology mapping to extend the generator without changing its CLI contract.
 
 Generated projects record the selected standard and profile versions locally in `project.yml`; they do not require the standard repository at runtime.
